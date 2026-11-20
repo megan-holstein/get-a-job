@@ -9,7 +9,7 @@ Harness layout: one folder per job target, each holding its own resume:
 Edit the markdown, then run:
 
     python3 build_resume.py resumes/<target>/resume.md [--pages N] [--font NAME] [--divider SYM]
-                            [--open] [--snapshot "what changed"]
+                            [--open] [--note "what changed"]
 
 The PDF lands next to the input, named <Name>_Resume.pdf, where Name is the
 bold name on the first line of the markdown. Use --out to write elsewhere.
@@ -24,12 +24,18 @@ What it does:
      extraction in strict ATS parsers). --divider swaps the separator symbol
      in the contact line (the line under the name) for another.
   3. Prints to PDF with headless Chrome (no page header/footer), AUTO-FITTING
-     to the page limit (--pages, default 2): it tries the FIT_STEPS spacing presets from roomiest to
-     tightest and keeps the first render that fits. No manual tuning needed.
+     to the page limit (--pages, default 2): it tries the FIT_STEPS spacing
+     presets from roomiest to tightest and keeps the first render that fits.
+     No manual tuning needed.
   4. Verifies with pypdf: reports page count, checks that every long word
      from the markdown survives text extraction (catches ligature/encoding
      regressions), and warns if the chosen font is not embedded in the PDF
      (Chrome substituted a fallback because the font is not installed).
+  5. Measures each bullet's last line and lists the bullets that wrap onto a
+     line under half full, so each can be cut to one line less or extended.
+  6. Keeps the day's last build as versions/YYYY-MM-DD.md and .pdf beside the
+     resume. A later build the same day overwrites it, so the history holds
+     one version per day the resume changed.
 
 Chrome is found via the RESUME_CHROME environment variable (full path to a
 Chrome or Chromium binary), then the macOS default install, then google-chrome,
@@ -255,6 +261,61 @@ def render_pdf(
         sys.exit(f"Chrome failed to produce a PDF:\n{result.stderr}")
 
 
+MIN_LAST_LINE = 0.5  # a wrapped bullet's last line must fill at least this share of the line
+
+MEASURE_JS = """
+<script>
+const out = [];
+for (const li of document.querySelectorAll('li')) {
+  const range = document.createRange();
+  range.selectNodeContents(li);
+  const lines = new Map();
+  for (const r of range.getClientRects()) {
+    if (r.width === 0) continue;
+    const key = Math.round(r.top);
+    const cur = lines.get(key) || [Infinity, -Infinity];
+    lines.set(key, [Math.min(cur[0], r.left), Math.max(cur[1], r.right)]);
+  }
+  const tops = [...lines.keys()].sort((a, b) => a - b);
+  const last = lines.get(tops[tops.length - 1]);
+  out.push([tops.length, (last[1] - last[0]) / li.getBoundingClientRect().width, li.textContent.slice(0, 48)]);
+}
+document.title = 'WRAPS' + JSON.stringify(out) + 'ENDWRAPS';
+</script>
+"""
+
+
+def short_last_lines(
+    body_html: str, body_pt: float, line_height: float, chrome: str, font_stack: str
+) -> list[tuple[int, float, str]]:
+    """Bullets that wrap onto a last line filling under MIN_LAST_LINE of the width.
+
+    Lays the page out in headless Chrome in the chosen font at the printable width
+    (Letter less the half-inch margins) and measures each bullet's last line. A wrap that carries
+    only a few words spends a whole line on them: the bullet should be cut to
+    fit the line above or extended to use the line it has taken.
+    """
+    import json
+
+    page = (
+        "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>measuring</title>"
+        f"<style>{css(body_pt, line_height, font_stack)} body {{ width: 7.5in; }}</style></head>"
+        f"<body>\n{body_html}\n{MEASURE_JS}</body></html>"
+    )
+    with tempfile.TemporaryDirectory() as td:
+        html_path = Path(td) / "measure.html"
+        html_path.write_text(page, encoding="utf-8")
+        result = subprocess.run(
+            [chrome, "--headless", "--disable-gpu", "--dump-dom", html_path.as_uri()],
+            capture_output=True,
+            text=True,
+        )
+    m = re.search(r"WRAPS(\[.*?\])ENDWRAPS", html.unescape(result.stdout), re.S)
+    if not m:
+        return []
+    return [(n, fill, text) for n, fill, text in json.loads(m.group(1)) if n > 1 and fill < MIN_LAST_LINE]
+
+
 def page_count(pdf_path: Path) -> int:
     from pypdf import PdfReader
 
@@ -287,27 +348,43 @@ def verify_words(pdf_path: Path, md_text: str) -> list[str]:
     return sorted(w for w in words if w not in extracted and w.replace("-", "") not in squashed)
 
 
-def snapshot(md_path: Path, note: str) -> Path:
-    """Copy the resume Markdown to versions/vNN.md beside it and log the version.
+LOG_HEADER = (
+    "# Versions\n\nOne dated version per day the resume changed: the last build of that day. "
+    "Restore one by copying it over `resume.md` and building.\n\n"
+)
+
+
+def archive(md_path: Path, pdf_path: Path, note: Optional[str]) -> Optional[Path]:
+    """Keep the day's last build as versions/YYYY-MM-DD.md, with its PDF beside it.
+
+    Every build calls this. A later build on the same day overwrites the day's
+    version, so working drafts from a review session leave nothing behind and the
+    history holds one entry per day the resume changed. A build whose Markdown
+    equals the newest version of an earlier day archives nothing.
 
     Versions are files, not git history, because a user's resumes are gitignored.
-    The log (versions/log.md) gets one line per version: number, date, note.
+    The log (versions/log.md) holds one line per version: date and note.
     """
     import datetime
-    import shutil
 
     vdir = md_path.parent / "versions"
     vdir.mkdir(exist_ok=True)
-    existing = sorted(vdir.glob("v[0-9][0-9].md"))
-    n = int(existing[-1].stem[1:]) + 1 if existing else 1
-    dest = vdir / f"v{n:02d}.md"
-    shutil.copy2(md_path, dest)
-    log = vdir / "log.md"
-    if not log.exists():
-        log.write_text("# Versions\n\nOne line per snapshot. Restore one by copying it over `resume.md` and snapshotting again; a version is never deleted or edited.\n\n", encoding="utf-8")
     today = datetime.date.today().isoformat()
+    dest = vdir / f"{today}.md"
+    earlier = sorted(v for v in vdir.glob("[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].md") if v != dest)
+    if earlier and earlier[-1].read_bytes() == md_path.read_bytes():
+        if dest.exists():  # today's drafts were all reverted: the day changed nothing
+            dest.unlink()
+            dest.with_suffix(".pdf").unlink(missing_ok=True)
+            drop_log_line(vdir / "log.md", today)
+        return None
+    shutil.copy2(md_path, dest)
+    shutil.copy2(pdf_path, dest.with_suffix(".pdf"))
+    log = vdir / "log.md"
+    lines = drop_log_line(log, today)
+    kept = note or next((l.split(": ", 1)[1] for l in lines if l.startswith(f"- {today}: ")), "")
     with log.open("a", encoding="utf-8") as f:
-        f.write(f"- v{n:02d} ({today}): {note}\n")
+        f.write(f"- {today}: {kept}\n" if kept else f"- {today}\n")
     return dest
 
 
@@ -320,6 +397,18 @@ def positive_int(value: str) -> int:
     if n < 1:
         raise argparse.ArgumentTypeError(f"must be at least 1: {n}")
     return n
+
+
+def drop_log_line(log: Path, day: str) -> list[str]:
+    """Remove the log line for one day; return the lines the log held before."""
+    if not log.exists():
+        log.write_text(LOG_HEADER, encoding="utf-8")
+        return []
+    lines = log.read_text(encoding="utf-8").splitlines()
+    log.write_text(
+        "\n".join(l for l in lines if not l.startswith(f"- {day}")) + "\n", encoding="utf-8"
+    )
+    return lines
 
 
 def main() -> int:
@@ -351,10 +440,9 @@ def main() -> int:
     )
     ap.add_argument("--open", action="store_true", help="open the PDF when done")
     ap.add_argument(
-        "--snapshot",
-        metavar="NOTE",
+        "--note",
         default=None,
-        help="before building, copy the Markdown to versions/vNN.md beside it and log NOTE",
+        help="what changed and why, logged against today's version in versions/log.md",
     )
     args = ap.parse_args()
 
@@ -367,10 +455,6 @@ def main() -> int:
             "of a Chrome or Chromium binary (or install google-chrome, chromium or "
             "chromium-browser on PATH)."
         )
-
-    if args.snapshot:
-        dest = snapshot(args.md, args.snapshot)
-        print(f"snapshot {dest}")
 
     md_text = args.md.read_text(encoding="utf-8")
     name = resume_name(md_text)
@@ -410,6 +494,21 @@ def main() -> int:
             f"trim content in {args.md.name}; do not shrink type further"
         )
         status = 1
+
+    short = short_last_lines(body_html, body_pt, line_height, chrome, font_stack)
+    if short:
+        print(
+            f"NOTE: {len(short)} bullet(s) wrap onto a last line under {MIN_LAST_LINE:.0%} full. "
+            "Cut each to fit the line above, or extend it to use the line:"
+        )
+        for n, fill, text in short:
+            print(f"  {fill:4.0%} of line {n}: {text}...")
+    else:
+        print("every wrapped bullet fills its last line")
+
+    if args.out is None:  # a build written elsewhere is a one-off, not the resume in use
+        dest = archive(args.md, out, args.note)
+        print(f"version {dest}" if dest else "no version written: unchanged since the last one")
 
     if args.open:
         subprocess.run(["open", str(out)])

@@ -5,6 +5,7 @@
 /artifacts/
 /targets/
 /resumes/
+/answers/
 
 .DS_Store
 __pycache__/
