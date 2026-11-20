@@ -31,10 +31,11 @@ What it does:
      from the markdown survives text extraction (catches ligature/encoding
      regressions), and warns if the chosen font is not embedded in the PDF
      (Chrome substituted a fallback because the font is not installed).
-  5. Keeps a page from opening with a few leftover lines of one section above
-     the next heading: it starts that next section on the new page and refits,
-     and says so. Where the page limit leaves no room, it says how many lines
-     to cut.
+  5. Makes each page open on a section heading or the header of a role or
+     project. A few leftover lines at the top of a page are pulled back, and a
+     role that has barely started at the foot of a page is moved whole. It
+     says what it did, and where the page limit leaves no room it says how
+     many lines to cut. A long entry split in its middle is left alone.
   6. Measures each bullet's last line and lists the bullets that wrap onto a
      line under half full, so each can be cut to one line less or extended.
   7. Keeps the day's last build as versions/YYYY-MM-DD.md and .pdf beside the
@@ -141,7 +142,7 @@ def css(body_pt: float, line_height: float, font_stack: str) -> str:
   }}
   h1 {{ font-size: 16pt; margin: 0 0 2pt 0; letter-spacing: 0.3px; }}
   .contact {{ margin: 0 0 6pt 0; }}
-  h2.pagebreak {{ break-before: page; margin-top: 0; }}
+  .pagebreak {{ break-before: page; margin-top: 0 !important; }}
   h2 {{ break-after: avoid; }}
   h2 {{
     font-size: 10pt;
@@ -189,6 +190,7 @@ def build_body(md_text: str, divider: Optional[str] = None, break_before: frozen
     blocks = [b for b in re.split(r"\n\s*\n", md_text) if b.strip()]
     out = []
     section = None
+    entry = 0  # index of the next entry header (a role or a project)
     sub = False  # inside a sub-entry (an italic-led job line nested under a bold one)
     for idx, block in enumerate(blocks):
         lines = [l for l in block.split("\n") if l.strip()]
@@ -210,7 +212,7 @@ def build_body(md_text: str, divider: Optional[str] = None, break_before: frozen
         if m and m.group(1).strip() in SECTION_NAMES:
             section = m.group(1).strip()
             sub = False
-            cls = ' class="pagebreak"' if section.lower() in break_before else ""
+            cls = ' class="pagebreak"' if f"section:{section.lower()}" in break_before else ""
             out.append(f"<h2{cls}>{section.title()}</h2>")
             continue
 
@@ -237,7 +239,11 @@ def build_body(md_text: str, divider: Optional[str] = None, break_before: frozen
             # several roles, or one company with several products and clients,
             # reads as a single listing. Indent is CSS margin only (ATS-safe).
             sub = first.startswith("*") and not first.startswith("**")
-            out.append(paragraph_html(lines, "job sub" if sub else "job"))
+            cls = "job sub" if sub else "job"
+            if f"entry:{entry}" in break_before:
+                cls += " pagebreak"
+            entry += 1
+            out.append(paragraph_html(lines, cls))
     return "\n".join(out)
 
 
@@ -323,28 +329,62 @@ def short_last_lines(
     return [(n, fill, text) for n, fill, text in json.loads(m.group(1)) if n > 1 and fill < MIN_LAST_LINE]
 
 
-STRANDED_MAX = 6  # a section's tail of this many lines or fewer at the top of a page is stranded
+STRANDED_MAX = 6  # this many leftover lines or fewer at the top of a page are stranded
+ENTRY_START_MAX = 4  # an entry with this many lines or fewer at the foot of a page has barely started
 
 
-def stranded_lines(pdf_path: Path) -> list[tuple[int, int, str, str]]:
-    """Pages that open with the last few lines of a section before the next heading.
+def entry_headers(body_html: str) -> list[str]:
+    """Plain text of each entry header (a role or a project), in page order."""
+    found = re.findall(r'<p class="job[^"]*">(.*?)</p>', body_html, re.S)
+    return [html.unescape(re.sub(r"<[^>]+>", "", h)) for h in found]
 
-    A human reader turns the page and meets one or two leftover lines of the
-    previous section, then a new heading: the leftover reads as an accident and
-    the new section loses the top of the page. Returns (page number, lines
-    carried over, first line, the heading that follows) for each such page.
+
+def page_openings(pdf_path: Path, headers: list[str]) -> list[dict]:
+    """Pages that open in the middle of an entry or a section.
+
+    A reader who turns the page should meet a section heading or the header of a
+    role or project. For each page that opens otherwise, report how many leftover
+    lines sit above the next clean boundary, which boundary that is, how many
+    lines of the split entry sit on the page before, and which entry it is. The
+    caller uses these to pull the leftover back or push the entry forward.
     """
     from pypdf import PdfReader
 
-    names = {n.lower() for n in SECTION_NAMES} | {"summary"}
+    def squash(text: str) -> str:
+        return re.sub(r"\s+", "", text).lower()
+
+    sections = {squash(n): f"section:{n.lower()}" for n in SECTION_NAMES}
+    entries = {squash(h): f"entry:{i}" for i, h in enumerate(headers)}
+
+    def boundary(line: str) -> Optional[str]:
+        key = squash(line)
+        return sections.get(key) or entries.get(key)
+
+    pages = [
+        [l.strip() for l in (p.extract_text() or "").splitlines() if l.strip()]
+        for p in PdfReader(str(pdf_path)).pages
+    ]
     found = []
-    for number, page in enumerate(PdfReader(str(pdf_path)).pages[1:], start=2):
-        lines = [l.strip() for l in (page.extract_text() or "").splitlines() if l.strip()]
-        for i, line in enumerate(lines[: STRANDED_MAX + 1]):
-            if line.lower() in names:
-                if i > 0:
-                    found.append((number, i, lines[0], line.title()))
+    for n in range(1, len(pages)):
+        lines, before = pages[n], pages[n - 1]
+        if not lines or boundary(lines[0]):
+            continue
+        leftover, next_key = len(lines), None
+        for i, line in enumerate(lines):
+            if boundary(line):
+                leftover, next_key = i, boundary(line)
                 break
+        started, split_key = 0, None
+        for i in range(len(before) - 1, -1, -1):
+            key = boundary(before[i])
+            if key:
+                if key.startswith("entry:"):
+                    started, split_key = len(before) - i, key
+                break
+        found.append(
+            {"page": n + 1, "leftover": leftover, "next": next_key, "started": started,
+             "split": split_key, "first": lines[0]}
+        )
     return found
 
 
@@ -512,29 +552,52 @@ def main() -> int:
                 break
         return count, pt, lh
 
-    breaks = frozenset([args.break_before] if args.break_before else [])
+    breaks = frozenset([f"section:{args.break_before}"] if args.break_before else [])
     body_html = build_body(md_text, args.divider, breaks)
     pages, body_pt, line_height = fit(body_html)
 
-    # A page must not open with a few leftover lines of one section above the next
-    # heading. Where it does, start that next section on the new page and refit, so
-    # the leftover lines are pulled back. Kept only if the page limit still holds.
+    # A page must open on a section heading or the header of a role or project.
+    # Where a few leftover lines open the page, break at the next boundary and refit,
+    # which pulls them back. Where an entry has barely started at the foot of the page
+    # before, break before that entry, which moves it whole. A change is kept only if
+    # the page limit still holds. A long entry split in its middle is left alone.
+    def label(key: str) -> str:
+        kind, _, value = key.partition(":")
+        return value.title() if kind == "section" else entry_headers(body_html)[int(value)].split(" — ")[0]
+
     moved, unresolved = [], []
-    while pages <= args.pages:
-        stranded = [s for s in stranded_lines(out) if s[3].lower() not in breaks]
-        if not stranded:
+    for _ in range(8):
+        if pages > args.pages:
             break
-        number, carried, first, heading = stranded[0]
-        trial = breaks | {heading.lower()}
-        trial_html = build_body(md_text, args.divider, trial)
-        trial_fit = fit(trial_html)
-        if trial_fit[0] <= args.pages:
-            breaks, body_html = trial, trial_html
-            pages, body_pt, line_height = trial_fit
-            moved.append((heading, number, carried))
-        else:
+        opening = next(
+            (o for o in page_openings(out, entry_headers(body_html))
+             if o["leftover"] <= STRANDED_MAX or 0 < o["started"] <= ENTRY_START_MAX),
+            None,
+        )
+        if opening is None:
+            break
+        tries = []
+        if opening["leftover"] <= STRANDED_MAX and opening["next"]:
+            tries.append((opening["next"], "pulled back"))
+        if 0 < opening["started"] <= ENTRY_START_MAX and opening["split"]:
+            tries.append((opening["split"], "moved whole"))
+        done = False
+        for key, how in tries:
+            if key in breaks:
+                continue
+            trial = breaks | {key}
+            trial_html = build_body(md_text, args.divider, trial)
+            trial_fit = fit(trial_html)
+            if trial_fit[0] <= args.pages:
+                breaks, body_html = trial, trial_html
+                pages, body_pt, line_height = trial_fit
+                moved.append((opening["page"], label(key), how))
+                done = True
+                break
+        if not done:
             render_pdf(body_html, body_pt, line_height, out, chrome, title, font_stack)
-            unresolved.append((number, carried, first, heading))
+            if opening["leftover"] <= STRANDED_MAX:
+                unresolved.append(opening)
             break
 
     missing = verify_words(out, md_text)
@@ -573,16 +636,16 @@ def main() -> int:
     else:
         print("every wrapped bullet fills its last line")
 
-    for heading, number, carried in moved:
+    for number, name, how in moved:
+        if how == "pulled back":
+            print(f"page {number} now opens with {name}: the leftover lines before it were pulled back a page")
+        else:
+            print(f"page {number} now opens with {name}: the entry was moved whole from the foot of the page before")
+    for o in unresolved:
         print(
-            f"page {number} now opens with {heading}: {carried} leftover line(s) of the section "
-            "before it were pulled back onto the previous page"
-        )
-    for number, carried, first, heading in unresolved:
-        print(
-            f"NOTE: page {number} opens with {carried} line(s) left over from the previous section "
-            f"(\"{first[:50]}...\") before {heading}, and the page limit leaves no room to pull them "
-            f"back. Cut {carried} line(s) from what precedes {heading}."
+            f"NOTE: page {o['page']} opens with {o['leftover']} leftover line(s) (\"{o['first'][:50]}...\") "
+            f"and the page limit leaves no room to pull them back. Cut {o['leftover']} line(s) from the "
+            "content before the page break."
         )
 
     if args.out is None:  # a build written elsewhere is a one-off, not the resume in use
