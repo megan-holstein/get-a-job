@@ -12,7 +12,7 @@ A drafting agent writes `resume.md` with no regard for length. For each role it 
 
 ## Pass 2: selection and writing
 
-A second agent, given only the expansion draft, the target's **Scorecard**, `profile.md`, `docs/style-guide.md` and this file (not the interviews, so it cannot add), writes the resume to two pages. Its brief:
+A second agent, given only the expansion draft, the target's **Scorecard**, `profile.md`, `docs/style-guide.md` and this file (not the interviews, so it cannot add), writes the resume to the page limit in `profile.md` (two pages unless it says otherwise). Its brief:
 
 - **Choose the point of each bullet first.** For each piece of work in the draft, write the one plain sentence the user would say about it to this target's hiring manager. Then write the bullet that makes that point, by the rules under "Writing a bullet" in the style guide.
 - **Select.** A bullet carries the one or two facts that make its point, a number where one shows scale or change, and at most one clause of how. Facts that do not serve the point are left out. The agent returns a list of every fact it left out, so the orchestrator can confirm nothing was lost by accident and the user can ask for one back.
@@ -28,7 +28,7 @@ A third agent, given only the resume and the target's **Scorecard**, reads it as
 
 ## Filling the page
 
-Selection often leaves room on two pages, and a page with room is a page underselling the user. Add back from the list of facts left out, most persuasive first: a result, a number, the scale, a named specific that makes a bullet concrete, then a further bullet. Stop when the page is full at a comfortable preset. What never comes back is the shape the selection pass removed: a second and third mechanism in one bullet, or a string of abstract nouns.
+Selection often leaves room within the page limit, and a page with room is a page underselling the user. Add back from the list of facts left out, most persuasive first: a result, a number, the scale, a named specific that makes a bullet concrete, then a further bullet. Stop when the page is full at a comfortable preset. What never comes back is the shape the selection pass removed: a second and third mechanism in one bullet, or a string of abstract nouns.
 
 ## Then
 
