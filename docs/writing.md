@@ -26,6 +26,10 @@ A second agent, given only the expansion draft, the target's **Scorecard**, `pro
 
 A third agent, given only the resume and the target's **Scorecard**, reads it as the hiring manager would, with no knowledge of the user. For each bullet it answers the seven questions in the style guide's check, and for the whole page it answers two more: after ten seconds on the top third, what would you say this person does, and which three bullets would you repeat to a colleague? It returns the bullets that fail, with the question each failed, and its two answers. It rewrites nothing. A cold reader applies the questions strictly and will flag most bullets on a first run, so the orchestrator acts on the patterns (a role where every bullet has the same shape, a missing result the facts could supply, a bullet failing three or more questions) and treats a single failed question as a judgment call. A missing result the facts do not hold goes to the next interview round. The orchestrator fixes the failures from the facts and, if the ten-second answer is not the positioning the target calls for, reorders or rewrites the summary.
 
+## Filling the page
+
+Selection often leaves room on two pages, and a page with room is a page underselling the user. Add back from the list of facts left out, most persuasive first: a result, a number, the scale, a named specific that makes a bullet concrete, then a further bullet. Stop when the page is full at a comfortable preset. What never comes back is the shape the selection pass removed: a second and third mechanism in one bullet, or a string of abstract nouns.
+
 ## Then
 
 The orchestrator checks the list of facts left out against the target, hands the result to the user in their editor (`AGENTS.md` step 7) with that list, and builds after the user's edits.

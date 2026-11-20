@@ -26,7 +26,9 @@ What it does:
   4. Verifies with pypdf: reports page count and checks that every long word
      from the markdown survives text extraction (catches ligature/encoding
      regressions).
-  5. Keeps the day's last build as versions/YYYY-MM-DD.md and .pdf beside the
+  5. Measures each bullet's last line and lists the bullets that wrap onto a
+     line under half full, so each can be cut to one line less or extended.
+  6. Keeps the day's last build as versions/YYYY-MM-DD.md and .pdf beside the
      resume. A later build the same day overwrites it, so the history holds
      one version per day the resume changed.
 
@@ -232,6 +234,59 @@ def render_pdf(
         sys.exit(f"Chrome failed to produce a PDF:\n{result.stderr}")
 
 
+MIN_LAST_LINE = 0.5  # a wrapped bullet's last line must fill at least this share of the line
+
+MEASURE_JS = """
+<script>
+const out = [];
+for (const li of document.querySelectorAll('li')) {
+  const range = document.createRange();
+  range.selectNodeContents(li);
+  const lines = new Map();
+  for (const r of range.getClientRects()) {
+    if (r.width === 0) continue;
+    const key = Math.round(r.top);
+    const cur = lines.get(key) || [Infinity, -Infinity];
+    lines.set(key, [Math.min(cur[0], r.left), Math.max(cur[1], r.right)]);
+  }
+  const tops = [...lines.keys()].sort((a, b) => a - b);
+  const last = lines.get(tops[tops.length - 1]);
+  out.push([tops.length, (last[1] - last[0]) / li.getBoundingClientRect().width, li.textContent.slice(0, 48)]);
+}
+document.title = 'WRAPS' + JSON.stringify(out) + 'ENDWRAPS';
+</script>
+"""
+
+
+def short_last_lines(body_html: str, body_pt: float, line_height: float, chrome: str) -> list[tuple[int, float, str]]:
+    """Bullets that wrap onto a last line filling under MIN_LAST_LINE of the width.
+
+    Lays the page out in headless Chrome at the printable width (Letter less the
+    half-inch margins) and measures each bullet's last line. A wrap that carries
+    only a few words spends a whole line on them: the bullet should be cut to
+    fit the line above or extended to use the line it has taken.
+    """
+    import json
+
+    page = (
+        "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>measuring</title>"
+        f"<style>{css(body_pt, line_height)} body {{ width: 7.5in; }}</style></head>"
+        f"<body>\n{body_html}\n{MEASURE_JS}</body></html>"
+    )
+    with tempfile.TemporaryDirectory() as td:
+        html_path = Path(td) / "measure.html"
+        html_path.write_text(page, encoding="utf-8")
+        result = subprocess.run(
+            [chrome, "--headless", "--disable-gpu", "--dump-dom", html_path.as_uri()],
+            capture_output=True,
+            text=True,
+        )
+    m = re.search(r"WRAPS(\[.*?\])ENDWRAPS", html.unescape(result.stdout), re.S)
+    if not m:
+        return []
+    return [(n, fill, text) for n, fill, text in json.loads(m.group(1)) if n > 1 and fill < MIN_LAST_LINE]
+
+
 def page_count(pdf_path: Path) -> int:
     from pypdf import PdfReader
 
@@ -357,6 +412,17 @@ def main() -> int:
             f"trim content in {args.md.name}; do not shrink type further"
         )
         status = 1
+
+    short = short_last_lines(body_html, body_pt, line_height, chrome)
+    if short:
+        print(
+            f"NOTE: {len(short)} bullet(s) wrap onto a last line under {MIN_LAST_LINE:.0%} full. "
+            "Cut each to fit the line above, or extend it to use the line:"
+        )
+        for n, fill, text in short:
+            print(f"  {fill:4.0%} of line {n}: {text}...")
+    else:
+        print("every wrapped bullet fills its last line")
 
     if args.out is None:  # a build written elsewhere is a one-off, not the resume in use
         dest = archive(args.md, out, args.note)
