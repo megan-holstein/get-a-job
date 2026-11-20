@@ -11,7 +11,7 @@ email ♦ phone ♦ [website](https://example.com) ♦ City, ST
 
 - Is the search discreet (currently employed)? If so, nothing from this folder is published or referenced anywhere public.
 - Confidential employers, if any, and what must stay generalized for each (headcounts, data volumes, system or team names).
-- Format: page limit (default two; one is the norm for early-career candidates), font (default Helvetica; one of arial, calibri, cambria, georgia, helvetica, palatino, times, verdana) and contact-line divider (default ♦; or | · • ◆ ▪). A section that should open a page for a human reader (`--break-before SECTION`, usually projects on a two-page resume). Agents pass them to the build script as `--pages N --font NAME --divider SYM --break-before SECTION`; the script enforces them and ATS-safe output.
+- Format: page limit (default two; one is the norm for early-career candidates), font (default Helvetica; one of arial, calibri, cambria, georgia, helvetica, palatino, times, verdana) and contact-line divider (default ♦; or | · • ◆ ▪). Agents pass them to the build script as `--pages N --font NAME --divider SYM`; the script enforces them and ATS-safe output.
 
 ## What the next job must have
 

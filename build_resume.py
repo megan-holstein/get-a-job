@@ -31,8 +31,10 @@ What it does:
      from the markdown survives text extraction (catches ligature/encoding
      regressions), and warns if the chosen font is not embedded in the PDF
      (Chrome substituted a fallback because the font is not installed).
-  5. Reports any page that opens with a few leftover lines of the previous
-     section, and --break-before SECTION starts a section on a fresh page.
+  5. Keeps a page from opening with a few leftover lines of one section above
+     the next heading: it starts that next section on the new page and refits,
+     and says so. Where the page limit leaves no room, it says how many lines
+     to cut.
   6. Measures each bullet's last line and lists the bullets that wrap onto a
      line under half full, so each can be cut to one line less or extended.
   7. Keeps the day's last build as versions/YYYY-MM-DD.md and .pdf beside the
@@ -140,6 +142,7 @@ def css(body_pt: float, line_height: float, font_stack: str) -> str:
   h1 {{ font-size: 16pt; margin: 0 0 2pt 0; letter-spacing: 0.3px; }}
   .contact {{ margin: 0 0 6pt 0; }}
   h2.pagebreak {{ break-before: page; margin-top: 0; }}
+  h2 {{ break-after: avoid; }}
   h2 {{
     font-size: 10pt;
     text-transform: uppercase;
@@ -182,7 +185,7 @@ def paragraph_html(lines: list[str], cls: str) -> str:
     return f"<p{cls_attr}>{''.join(parts)}</p>"
 
 
-def build_body(md_text: str, divider: Optional[str] = None, break_before: Optional[str] = None) -> str:
+def build_body(md_text: str, divider: Optional[str] = None, break_before: frozenset[str] = frozenset()) -> str:
     blocks = [b for b in re.split(r"\n\s*\n", md_text) if b.strip()]
     out = []
     section = None
@@ -207,7 +210,7 @@ def build_body(md_text: str, divider: Optional[str] = None, break_before: Option
         if m and m.group(1).strip() in SECTION_NAMES:
             section = m.group(1).strip()
             sub = False
-            cls = ' class="pagebreak"' if break_before and section == break_before.upper() else ""
+            cls = ' class="pagebreak"' if section.lower() in break_before else ""
             out.append(f"<h2{cls}>{section.title()}</h2>")
             continue
 
@@ -472,8 +475,9 @@ def main() -> int:
         choices=sorted(n.lower() for n in SECTION_NAMES),
         default=None,
         metavar="SECTION",
-        help="start this section at the top of a new page (experience, projects, skills or education); "
-        "the auto-fit then tightens the type until what precedes it fits. Take it from profile.md",
+        help="force this section to the top of a new page (experience, projects, skills or education). "
+        "Rarely needed: the build already moves a section to the next page when a few leftover lines "
+        "of the one before it would open the page",
     )
     ap.add_argument("--open", action="store_true", help="open the PDF when done")
     ap.add_argument(
@@ -497,14 +501,40 @@ def main() -> int:
     name = resume_name(md_text)
     title = f"{name} — Resume" if name else "Resume"
     out = args.out if args.out else default_out(args.md, name)
-    body_html = build_body(md_text, args.divider, args.break_before)
     font_stack, font_prefix = FONTS[args.font]
 
-    pages = None
-    for body_pt, line_height in FIT_STEPS:
-        render_pdf(body_html, body_pt, line_height, out, chrome, title, font_stack)
-        pages = page_count(out)
-        if pages <= args.pages:
+    def fit(html_body: str) -> tuple[int, float, float]:
+        """Render at the roomiest preset that fits the page limit; the tightest if none does."""
+        for pt, lh in FIT_STEPS:
+            render_pdf(html_body, pt, lh, out, chrome, title, font_stack)
+            count = page_count(out)
+            if count <= args.pages:
+                break
+        return count, pt, lh
+
+    breaks = frozenset([args.break_before] if args.break_before else [])
+    body_html = build_body(md_text, args.divider, breaks)
+    pages, body_pt, line_height = fit(body_html)
+
+    # A page must not open with a few leftover lines of one section above the next
+    # heading. Where it does, start that next section on the new page and refit, so
+    # the leftover lines are pulled back. Kept only if the page limit still holds.
+    moved, unresolved = [], []
+    while pages <= args.pages:
+        stranded = [s for s in stranded_lines(out) if s[3].lower() not in breaks]
+        if not stranded:
+            break
+        number, carried, first, heading = stranded[0]
+        trial = breaks | {heading.lower()}
+        trial_html = build_body(md_text, args.divider, trial)
+        trial_fit = fit(trial_html)
+        if trial_fit[0] <= args.pages:
+            breaks, body_html = trial, trial_html
+            pages, body_pt, line_height = trial_fit
+            moved.append((heading, number, carried))
+        else:
+            render_pdf(body_html, body_pt, line_height, out, chrome, title, font_stack)
+            unresolved.append((number, carried, first, heading))
             break
 
     missing = verify_words(out, md_text)
@@ -543,11 +573,16 @@ def main() -> int:
     else:
         print("every wrapped bullet fills its last line")
 
-    for number, carried, first, heading in stranded_lines(out):
+    for heading, number, carried in moved:
+        print(
+            f"page {number} now opens with {heading}: {carried} leftover line(s) of the section "
+            "before it were pulled back onto the previous page"
+        )
+    for number, carried, first, heading in unresolved:
         print(
             f"NOTE: page {number} opens with {carried} line(s) left over from the previous section "
-            f"(\"{first[:50]}...\") before {heading}. Cut that many lines above, extend the section so "
-            f"more of it carries over, or build with --break-before {heading.lower()}."
+            f"(\"{first[:50]}...\") before {heading}, and the page limit leaves no room to pull them "
+            f"back. Cut {carried} line(s) from what precedes {heading}."
         )
 
     if args.out is None:  # a build written elsewhere is a one-off, not the resume in use
