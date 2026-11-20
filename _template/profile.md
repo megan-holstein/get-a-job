@@ -13,6 +13,14 @@ email ♦ phone ♦ [website](https://example.com) ♦ City, ST
 - Confidential employers, if any, and what must stay generalized for each (headcounts, data volumes, system or team names).
 - Page limit and any format demands (the build script enforces two pages and ATS-safe output).
 
+## What the next job must have
+
+The user's criteria for the next role, dated, in their words where they gave them: must-haves (remote, pay floor, tools, hours, meeting load), preferences, how each is screened in a posting or recruiter screen, and any reason behind a criterion that must never be disclosed to an employer. Step 5 checks every target against them.
+
 ## Standing framing decisions
 
 Dated, one per line, with the user's words where they gave them: the roles that are separate entries and the ones that merge, the ordering of skills groups, framings the user rejected and must not be tried again, items dropped and why. Agents append here when the user confirms or overturns a judgment call; nothing is logged elsewhere.
+
+## Application answers
+
+Standing answers to the questions application forms repeat, recorded the first time the user gives one, dated: work authorization and sponsorship, salary expectation, earliest start date and notice period, relocation and remote or on-site preference, how they heard of a role. Agents read these and never guess one.

@@ -1,6 +1,6 @@
-# Writing a resume: two passes
+# Writing a resume: three passes
 
-Dense prose is produced in two passes by two different agents, never in one. The first writes long; the second cuts. One agent doing both in one pass produces the spacious middle: too tidy to be complete, too wordy to be dense.
+A resume is written in three passes by different agents, never in one. The first gathers every fact the target rewards. The second selects from them and writes bullets a person would say. The third reads the result as a stranger and sends back what fails. One agent doing all three produces a summary of its own context: accurate, complete and unreadable.
 
 ## The order a resume is developed in
 
@@ -10,19 +10,22 @@ Work from the hardest facts to the most derived section: **education, experience
 
 A drafting agent writes `resume.md` with no regard for length. For each role it puts in every fact from `interviews/<role>.md` **Facts** that the target's **Scorecard** rewards, in full sentences, with the scope, the decision, the alternative rejected and the result all present. It orders bullets by what the target weights most (`docs/positioning.md`). It follows `docs/style-guide.md` from the start, the industry terms above all. It may run to four pages. Its job is completeness and order; it makes no attempt to be brief.
 
-## Pass 2: the compression pass
+## Pass 2: selection and writing
 
-A second agent, given only `resume.md`, `profile.md`, `docs/style-guide.md` and this file (not the interviews, so it cannot add), rewrites it to two pages. Its brief:
+A second agent, given only the expansion draft, the target's **Scorecard**, `profile.md`, `docs/style-guide.md` and this file (not the interviews, so it cannot add), writes the resume to two pages. Its brief:
 
-- **Keep every fact, number, name, date and professional term.** Cutting is of words, never of information. If two pages cannot hold every fact, it stops and lists the bullets it would drop, lowest-value first, for the orchestrator to decide; it does not decide alone.
-- **Cut filler.** Articles where the sentence still reads without them; `that`, `which`, `in order to`, `the ability to`, `responsible for`, `a variety of`; hedges (`helped`, `supported`, `worked on`); any clause that restates what a number already says; any adjective doing a number's job.
-- **Compound the phrases.** `measurement of tool usage before and after` becomes `before-and-after usage measurement`; `a process for taking in and reviewing proposals` becomes `intake and investment review`.
-- **One subject per bullet, stated once.** No repeated `I`, no repeated role name, no repeated employer.
-- **Targets:** summary at most 90 words and written as prose (it keeps its articles; bullets may drop theirs); a bullet at most 30 words, two lines at the roomiest preset; a skills line at most two lines.
-- **Do not change scale.** No stronger verb, no larger scope, no rounding up. A fact marked `[generalized]` in the source stays as vague as it is written. Cutting a qualifier is not a change of scale (`docs/style-guide.md`).
-- **`docs/style-guide.md` stays in force.**
-- Output the full file, nothing else.
+- **Choose the point of each bullet first.** For each piece of work in the draft, write the one plain sentence the user would say about it to this target's hiring manager. Then write the bullet that makes that point, by the rules under "Writing a bullet" in the style guide.
+- **Select.** A bullet carries the one or two facts that make its point, a number where one shows scale or change, and at most one clause of how. Facts that do not serve the point are left out. The agent returns a list of every fact it left out, so the orchestrator can confirm nothing was lost by accident and the user can ask for one back.
+- **Never change scale.** No stronger verb, no larger scope, no rounding up, no fact the draft does not hold. A fact marked `[generalized]` stays as vague as it is written. Leaving a fact out is not a change of scale; inflating one is.
+- **Order bullets by what the target weights most,** and give a role three to six bullets, or up to eight for the current role the resume rests on. A role that needs more is carrying facts the reader will not reach.
+- **Targets:** summary at most 90 words, written as prose; a bullet at most two lines, about 25 words; a skills line at most two lines.
+- **Keep every name, date, title and number that it does print exactly as given.**
+- Output the full file and the list of facts left out, nothing else.
+
+## Pass 3: the reader's check
+
+A third agent, given only the resume and the target's **Scorecard**, reads it as the hiring manager would, with no knowledge of the user. For each bullet it answers the seven questions in the style guide's check, and for the whole page it answers two more: after ten seconds on the top third, what would you say this person does, and which three bullets would you repeat to a colleague? It returns the bullets that fail, with the question each failed, and its two answers. It rewrites nothing. A cold reader applies the questions strictly and will flag most bullets on a first run, so the orchestrator acts on the patterns (a role where every bullet has the same shape, a missing result the facts could supply, a bullet failing three or more questions) and treats a single failed question as a judgment call. A missing result the facts do not hold goes to the next interview round. The orchestrator fixes the failures from the facts and, if the ten-second answer is not the positioning the target calls for, reorders or rewrites the summary.
 
 ## Then
 
-The orchestrator diffs the two passes to confirm no fact was lost, hands the result to the user in their editor (`AGENTS.md` step 7), and builds with a snapshot after the user's edits.
+The orchestrator checks the list of facts left out against the target, hands the result to the user in their editor (`AGENTS.md` step 7) with that list, and builds after the user's edits.
