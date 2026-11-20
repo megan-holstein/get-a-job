@@ -31,9 +31,11 @@ What it does:
      from the markdown survives text extraction (catches ligature/encoding
      regressions), and warns if the chosen font is not embedded in the PDF
      (Chrome substituted a fallback because the font is not installed).
-  5. Measures each bullet's last line and lists the bullets that wrap onto a
+  5. Reports any page that opens with a few leftover lines of the previous
+     section, and --break-before SECTION starts a section on a fresh page.
+  6. Measures each bullet's last line and lists the bullets that wrap onto a
      line under half full, so each can be cut to one line less or extended.
-  6. Keeps the day's last build as versions/YYYY-MM-DD.md and .pdf beside the
+  7. Keeps the day's last build as versions/YYYY-MM-DD.md and .pdf beside the
      resume. A later build the same day overwrites it, so the history holds
      one version per day the resume changed.
 
@@ -137,6 +139,7 @@ def css(body_pt: float, line_height: float, font_stack: str) -> str:
   }}
   h1 {{ font-size: 16pt; margin: 0 0 2pt 0; letter-spacing: 0.3px; }}
   .contact {{ margin: 0 0 6pt 0; }}
+  h2.pagebreak {{ break-before: page; margin-top: 0; }}
   h2 {{
     font-size: 10pt;
     text-transform: uppercase;
@@ -179,7 +182,7 @@ def paragraph_html(lines: list[str], cls: str) -> str:
     return f"<p{cls_attr}>{''.join(parts)}</p>"
 
 
-def build_body(md_text: str, divider: Optional[str] = None) -> str:
+def build_body(md_text: str, divider: Optional[str] = None, break_before: Optional[str] = None) -> str:
     blocks = [b for b in re.split(r"\n\s*\n", md_text) if b.strip()]
     out = []
     section = None
@@ -204,7 +207,8 @@ def build_body(md_text: str, divider: Optional[str] = None) -> str:
         if m and m.group(1).strip() in SECTION_NAMES:
             section = m.group(1).strip()
             sub = False
-            out.append(f"<h2>{section.title()}</h2>")
+            cls = ' class="pagebreak"' if break_before and section == break_before.upper() else ""
+            out.append(f"<h2{cls}>{section.title()}</h2>")
             continue
 
         if section is None:
@@ -314,6 +318,31 @@ def short_last_lines(
     if not m:
         return []
     return [(n, fill, text) for n, fill, text in json.loads(m.group(1)) if n > 1 and fill < MIN_LAST_LINE]
+
+
+STRANDED_MAX = 6  # a section's tail of this many lines or fewer at the top of a page is stranded
+
+
+def stranded_lines(pdf_path: Path) -> list[tuple[int, int, str, str]]:
+    """Pages that open with the last few lines of a section before the next heading.
+
+    A human reader turns the page and meets one or two leftover lines of the
+    previous section, then a new heading: the leftover reads as an accident and
+    the new section loses the top of the page. Returns (page number, lines
+    carried over, first line, the heading that follows) for each such page.
+    """
+    from pypdf import PdfReader
+
+    names = {n.lower() for n in SECTION_NAMES} | {"summary"}
+    found = []
+    for number, page in enumerate(PdfReader(str(pdf_path)).pages[1:], start=2):
+        lines = [l.strip() for l in (page.extract_text() or "").splitlines() if l.strip()]
+        for i, line in enumerate(lines[: STRANDED_MAX + 1]):
+            if line.lower() in names:
+                if i > 0:
+                    found.append((number, i, lines[0], line.title()))
+                break
+    return found
 
 
 def page_count(pdf_path: Path) -> int:
@@ -438,6 +467,14 @@ def main() -> int:
         help="separator symbol for the contact line, one of " + " ".join(DIVIDERS)
         + " (default: whatever the Markdown uses); take it from profile.md",
     )
+    ap.add_argument(
+        "--break-before",
+        choices=sorted(n.lower() for n in SECTION_NAMES),
+        default=None,
+        metavar="SECTION",
+        help="start this section at the top of a new page (experience, projects, skills or education); "
+        "the auto-fit then tightens the type until what precedes it fits. Take it from profile.md",
+    )
     ap.add_argument("--open", action="store_true", help="open the PDF when done")
     ap.add_argument(
         "--note",
@@ -460,7 +497,7 @@ def main() -> int:
     name = resume_name(md_text)
     title = f"{name} — Resume" if name else "Resume"
     out = args.out if args.out else default_out(args.md, name)
-    body_html = build_body(md_text, args.divider)
+    body_html = build_body(md_text, args.divider, args.break_before)
     font_stack, font_prefix = FONTS[args.font]
 
     pages = None
@@ -505,6 +542,13 @@ def main() -> int:
             print(f"  {fill:4.0%} of line {n}: {text}...")
     else:
         print("every wrapped bullet fills its last line")
+
+    for number, carried, first, heading in stranded_lines(out):
+        print(
+            f"NOTE: page {number} opens with {carried} line(s) left over from the previous section "
+            f"(\"{first[:50]}...\") before {heading}. Cut that many lines above, extend the section so "
+            f"more of it carries over, or build with --break-before {heading.lower()}."
+        )
 
     if args.out is None:  # a build written elsewhere is a one-off, not the resume in use
         dest = archive(args.md, out, args.note)
